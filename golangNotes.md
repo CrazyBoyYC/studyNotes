@@ -13,6 +13,7 @@
 
 1. 双向chan可以转换为单向chan，反之不行 sendCh = ch
 2. 单向 写： sendCh := make(chan <- int)
+3. 是否读写成功：data, ok := <- ch
 
 ## select
 
@@ -20,6 +21,7 @@
 
    - 用于监听channel上的数据流动，与select与switch类似，但每个case语句必须是一个IO操作。可读可写
    - 按顺序从头至尾评估每一个发送和接收语句。从所有可执行（未阻塞）语句中任意挑选一条来使用。如果没有可执行语句，则有default时使用default。否则被阻塞直到有一个通信可以执行下去
+   - 自身不带循环，需要在外层加for
 
 2. 基础语法
 
@@ -32,7 +34,30 @@
      }
      ```
 
-3. 使用
+3. 超时使用：
+
+   - ```
+     c := make(chan int)
+     o := make(chan int)
+     go func() {
+     	for {
+     		// 每次都等5秒，没收到就退出了
+     		select {
+     		case v:= <-c:
+     			fmt.println(v)
+             case <-time.After(5 * time.Second):
+             	fmt.Println("timeout")
+             	o <- true
+             	break
+     		}
+     	}
+     }()
+     <- o
+     ```
+
+     
+
+4. 基本使用：
 
    ```go
    func send(out chan <-string)  {
@@ -112,7 +137,14 @@
      }
      ```
 
-     
+## 锁
+
+### 死锁
+
+1. 原因：
+   - 单go程自己死锁
+   - go程间channel访问顺序导致死锁
+   - 多go程，多channel交叉死锁
 
 # 常用模型
 
