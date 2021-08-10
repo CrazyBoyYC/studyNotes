@@ -139,12 +139,171 @@
 
 ## 锁
 
+#### tips
+
+互斥锁 读写锁不要与channel混用，容易产生隐性死锁
+
 ### 死锁
 
 1. 原因：
+
    - 单go程自己死锁
+
+     ```
+     ch := make(chan int)
+     ch <- 789 //写端阻塞
+     num := <-ch
+     ```
+
+     
+
    - go程间channel访问顺序导致死锁
+
+     - 使用channel一端读 一端写，有机会一同执行
+
    - 多go程，多channel交叉死锁
+
+     - ```
+       go fun() {
+       	for {
+       		select {
+       			case num := <- ch1:
+       				ch2 <- num
+       		}
+       	}
+       }
+       
+       for {
+       	select {
+       		case num := <-ch2:
+       			ch1 <- num
+       	}
+       }
+       ```
+
+### 互斥锁
+
+1. channel完成同步
+
+   - ```
+     func f1(ch chan int) {
+     	modifyShare()
+     	ch <- 1
+     }
+     
+     func f2(ch chan int) {
+     	<- ch
+     	modifyShare()
+     }
+     
+     func main() {
+     	go f1()
+     	go f2()
+     }
+     ```
+
+2. 通过锁，分享共享数据(建议锁：操作系统提供，建议你在编程时使用，不强制)
+
+   - ```
+     var mutex sync.Mutex
+     
+     func modifyShare() {
+     	mutex.Lock()
+     	doSomething()
+     	mutex.unLock()
+     }
+     
+     func f1(ch chan int) {
+     	modifyShare()
+     }
+     
+     func f2(ch chan int) {
+     	modifyShare()
+     }
+     
+     func main() {
+     	go f1()
+     	go f2()
+     }
+     ```
+
+### 读写锁：
+
+1. 读时共享，写时独占。写锁优先级比读锁高
+
+2. 示例
+
+   - ```
+     // 以下代码将产生隐性死锁
+     var num int
+     func readGo(idx int) {
+         for {
+         	rwMutex.RLock()
+     		fmt.Println(num)
+     		rwMutex.RUnLock()
+         }
+     }
+     
+     func writeGo(out chan<- int, idx int) {
+     	for {
+     		rwMutex.Lock()
+             num := rand.Intn(1000)
+             out <- num
+             time.Sleep(time.Second * 1)
+             rwMutex.UnLock()
+     	}
+     }
+     
+     func main() {
+     	quit := make(chan bool)
+     	ch := make(chan int)
+     	
+     	for i:=0; i < 5; i++ {
+     		go readGo(ch, i+1)
+     	}
+     	
+     	for i:=0; i < 5; i++ {
+     		go writeGo(ch, i+1)
+     	}
+     }
+     ```
+
+### 条件变量
+
+1. 定义：非锁，但是常与锁一起使用。生产者、消费者写或读之前，先判断条件变量
+
+2. 流程：判断条件变量、加锁、访问公共区、解锁、唤醒阻塞在条件变量上的对端
+
+3. 结构体:
+
+   - ```go
+     type Cond struct {
+     	noCopy noCopy
+     
+     	// L is held while observing or changing the condition
+     	L Locker
+     
+     	notify  notifyList
+     	checker copyChecker
+     }
+     ```
+
+4. 常用函数：
+
+   - Wait():check notifyListAdd unlock wait lock
+
+     - ```
+       //    c.L.Lock()
+       //    for !condition() {
+       //        c.Wait()
+       //    }
+       //    ... make use of condition ...
+       //    c.L.Unlock()
+       ```
+
+   - Signal()
+
+   - Broadcast()
 
 # 常用模型
 
