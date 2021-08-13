@@ -447,7 +447,12 @@ go语言提供几个简单的原子操作
        }
    ```
 
-   
+
+## map
+
+go语言的map就是一个散列表（哈希），由hmap和bmap构成。hmap中存在buckets（bmap）数组，每个buckets中最多存在8个key/value，超过则新建bmap，使用overflow连接起来。
+
+对于key传入后进行hash运算，低8位用于寻找bucket，高8位用于找bucket中的key。
 
 # 常用模型
 
