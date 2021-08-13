@@ -5,7 +5,11 @@
 
 # 基础知识点：
 
-## 内存布局
+## GC
+
+概念：
+
+## 内存
 
 1. 以32位操作系统为例（2^32为4G内存）：分为内核、用户。
 2. 内核占3-4g为内核。
@@ -19,6 +23,27 @@
 4. 栈帧：用来给函数运行提供内存空间。取内存于stack上。当函数调用时，产生栈帧（连续分配）。函数调用结束，释放栈帧。
    - 栈帧存储：局部变量 形参数 （形参与局部变量等同）内存字段描述值
    - 栈帧的地址区段描述靠的是：栈顶指针 栈基指针，当出现新的栈帧时，上个栈帧存储一个叫 **内存字段描述值**的，用于记住它当时的栈基地址。
+
+#### 内存逃逸
+
+**简介：**golang程序变量会携带一组**校验数据**，用来证明它的整个生命周期是否在运行时**完全可知**。如果变量通过了这些校验，它就可以在**栈上分配**。否则就说它**逃逸**了，必须在**堆上分配**。
+
+**查看逃逸命令**：go build -gcflags=-m main.go
+
+**逃逸的典型情况：**
+
+1. **在方法内把局部变量指针返回**
+2. **发送指针或带有指针的值到channel** 在编译时，是没有办法知道哪个 goroutine 会在 channel 上接收数据。所以编译器没法知道变量什么时候才会被释放。
+3. **在一个切片上存储指针或带指针的值** 一个典型的例子就是 []*string 。这会导致切片的内容逃逸。尽管其后面的数组可能是在栈上分配的，但其引用的值一定是在堆上。
+4. **slice 的背后数组被重新分配了，因为 append 时可能会超出其容量( cap )。** slice 初始化的地方在编译时是可以知道的，它最开始会在栈上分配。如果切片背后的存储要基于运行时的数据进行扩充，就会在堆上分配。
+5. **在 interface 类型上调用方法。** 在 interface 类型上调用方法都是动态调度的 —— 方法的真正实现只能在运行时知道。想像一个 io.Reader 类型的变量 r , 调用 r.Read(b) 会使得 r 的值和切片b 的背后存储都逃逸掉，所以会在堆上分配。
+
+#### 内存泄漏
+
+go是一门自己gc的语言，2分钟gc循环一次，如果内存泄漏，无非就是两种情况。
+
+- 有goroutine泄漏，goroutine“飞了”，zombie goroutine没有结束，这个时候在这个goroutine上分配的内存对象将一直被这个僵尸goroutine引用着，进而导致gc无法回收这类对象，内存泄漏
+- 有一些全局（或者生命周期和程序本身运行周期一样长的）的数据结构意外的挂住了本该释放的对象，虽然goroutine已经退出了，但是这些对象并没有从该类数据结构中删除，导致对象一直被引用，无法被回收。
 
 ## channel 
 
@@ -315,6 +340,114 @@
    - Signal()
 
    - Broadcast()
+
+## sync
+
+go语言提供几个简单的原子操作
+
+### sync/atomic
+
+ 1. Add()
+
+ 2. CAS(compare&swap)
+
+ 3. atomic.Value
+
+    - store
+
+    - load
+
+    - ```
+      var atomicVal atomic.Value
+      str := "hello"
+      // 类似小容器
+      atomicValue.Store(str)
+      newStr := atomicVal.Load()
+      ```
+
+### sync.WaitGroup
+
+1. Add()
+2. Done()
+3. Wait
+
+### sync.Once
+
+ 1. Once
+
+    - ```
+      // yucheng只会打印一次，无论是否多进程 真的只打一次
+      func main() {
+      	var once sync.Once
+      	onceBody := func() {
+      		fmt.Println("yucheng")
+      	}
+      
+      	done := make(chan bool)
+      	for i := 0; i < 10; i++ {
+      		go func() {
+      			once.Do(onceBody)
+      			done <- true
+      		}()
+      	}
+      	for i := 0; i < 10; i++ {
+      		<-done
+      	}
+      }
+      ```
+
+## context
+
+实现一对多的goroutine协作。当一个请求来时，会产生一个goroutine，可能会衍生出很多goroutine。context带着数据，贯穿全文。结束时ctx.Done这个channel收到信号
+
+有两个根context：background和todo。没多大区别，常用background作为树最顶层的Context，不能被取消。
+
+1. 生成子节点的方法：
+
+   ```
+   // 生成可撤销的Context（手动）
+   func WithCancel(parent Context) (ctx Context, cancel CancelFunc)
+   // 生成可定时撤销的Context（定时撤销）
+   func WithDeadline(parent Context, deadline time.Time) (Context, CancelFunc)
+   // 也是生成可定时撤销的Context （定时撤销）
+   func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc)
+   // 不可撤销的Context,可以存一个kv的值
+   func WithValue(parent Context, key, val interface{}) Context
+   ```
+
+2. 例子：
+
+   - WithCancel()
+
+   ```
+       gen := func(ctx context.Context) <-chan int {
+           dst := make(chan int)
+           n := 1
+           go func() {
+               for {
+                   select {
+                   case <-ctx.Done(): //只有撤销函数被调用后，才会触发
+                       return 
+                   case dst <- n:
+                       n++
+                   }
+               }
+           }()
+           return dst
+       }
+   
+       ctx, cancel := context.WithCancel(context.Background())
+       defer cancel()  //调用返回的cancel方法来让 context声明周期结束
+   
+       for n := range gen(ctx) {
+           fmt.Println(n)
+           if n == 5 {
+               break
+           }
+       }
+   ```
+
+   
 
 # 常用模型
 
